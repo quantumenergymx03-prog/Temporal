@@ -10772,7 +10772,7 @@ class MainApp:
             self._file_pick_target = None
             self._log(f"No se pudo abrir el selector de archivos para tendencia: {exc}")
 
-    def _resolve_picked_file_path(self, file_obj: ft.FilePickerFile) -> Optional[str]:
+    def _resolve_picked_file_path(self, file_obj: Any) -> Optional[str]:
         """Resuelve la ruta física de un archivo seleccionado por el FilePicker.
 
         En modo de escritorio, ``file_obj.path`` suele apuntar directamente al
