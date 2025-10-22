@@ -10772,6 +10772,76 @@ class MainApp:
             self._file_pick_target = None
             self._log(f"No se pudo abrir el selector de archivos para tendencia: {exc}")
 
+    def _resolve_picked_file_path(self, file_obj: Any) -> Optional[str]:
+        """Resuelve la ruta física de un archivo seleccionado por el FilePicker.
+
+        En modo de escritorio, ``file_obj.path`` suele apuntar directamente al
+        archivo. En modo web, el archivo se guarda en el directorio de
+        ``upload_dir`` configurado para la app (por defecto ``.flet/uploads`` o
+        el que se haya indicado). Esta función intenta localizar el archivo en
+        los destinos más habituales y devuelve una ruta absoluta válida o
+        ``None`` si no se encuentra.
+        """
+
+        try:
+            raw_path = str(getattr(file_obj, "path", "") or "").strip()
+        except Exception:
+            raw_path = ""
+
+        try:
+            name = str(getattr(file_obj, "name", "") or "").strip()
+        except Exception:
+            name = ""
+
+        candidates: List[str] = []
+
+        if raw_path:
+            candidates.append(raw_path)
+            candidates.append(os.path.abspath(raw_path))
+            if not os.path.isabs(raw_path):
+                cwd = os.getcwd()
+                candidates.append(os.path.join(cwd, raw_path))
+                base_name = os.path.basename(raw_path)
+                if base_name and base_name != raw_path:
+                    candidates.append(os.path.join(cwd, base_name))
+                candidates.append(os.path.join(cwd, ".flet", raw_path))
+                if base_name:
+                    candidates.append(os.path.join(cwd, ".flet", base_name))
+                    candidates.append(
+                        os.path.join(cwd, ".flet", "uploads", base_name)
+                    )
+
+        if name:
+            cwd = os.getcwd()
+            candidates.append(name)
+            candidates.append(os.path.join(cwd, name))
+            candidates.append(os.path.join(cwd, ".flet", name))
+            candidates.append(os.path.join(cwd, ".flet", "uploads", name))
+            data_dir = os.path.join(cwd, "data")
+            candidates.append(os.path.join(data_dir, name))
+
+        upload_dir_env = os.getenv("FLET_UPLOAD_DIR")
+        if upload_dir_env:
+            if raw_path:
+                candidates.append(os.path.join(upload_dir_env, raw_path))
+            if name:
+                candidates.append(os.path.join(upload_dir_env, name))
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            try:
+                if not candidate:
+                    continue
+                candidate_abs = os.path.abspath(candidate)
+                if candidate_abs in seen:
+                    continue
+                seen.add(candidate_abs)
+                if os.path.exists(candidate_abs) and os.path.isfile(candidate_abs):
+                    return candidate_abs
+            except Exception:
+                continue
+        return None
+
     def _handle_file_pick_result(self, e: ft.FilePickerResultEvent):
         """
         Manejador simplificado que solo obtiene la ruta del archivo y
@@ -10783,9 +10853,34 @@ class MainApp:
             return
 
         # Solo toma el primer archivo seleccionado y llama a la función de carga principal
-        file_path = e.files[0].path
+        file_obj = e.files[0]
+        file_path = self._resolve_picked_file_path(file_obj)
+        if not file_path:
+            try:
+                file_name = getattr(file_obj, "name", None) or "(sin nombre)"
+            except Exception:
+                file_name = "(sin nombre)"
+            self._log(
+                "No se pudo localizar el archivo seleccionado en el disco. "
+                "Verifica que la aplicación tenga un directorio de cargas configurado."
+            )
+            try:
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text(
+                        f"No se pudo acceder al archivo seleccionado: {file_name}."
+                    ),
+                    bgcolor="#e74c3c",
+                )
+                self.page.snack_bar.open = True
+                self.page.update()
+            except Exception:
+                pass
+            self._file_pick_target = None
+            return
         try:
-            self._log(f"Archivo seleccionado: {os.path.basename(file_path)}. Cargando...")
+            self._log(
+                f"Archivo seleccionado: {os.path.basename(file_path)}. Cargando..."
+            )
             # Llama a la única función encargada de cargar y preparar el análisis
             self._load_file_data(file_path)
         except Exception as ex:
@@ -12331,4 +12426,9 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
 
-    ft.app(target=main)
+    try:
+        os.makedirs("data", exist_ok=True)
+    except Exception:
+        pass
+
+    ft.app(target=main, upload_dir="data")
